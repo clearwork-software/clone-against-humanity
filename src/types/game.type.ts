@@ -9,7 +9,7 @@ export type Game = {
 	players: User[]
 	max_rounds: number
 	rounds: GameRound[]
-	czar: string
+	status: 'waiting' | 'in_progress' | 'finished'
 	winner?: string
 	created_at: Date
 	updated_at: Date
@@ -27,6 +27,7 @@ export type GameRound = {
 	game_id: string
 	number: number
 	czar_id: string
+	phase: 'picking_black' | 'picking_white' | 'judging' | 'complete'
 	black_card: SelectedCard
 	white_cards: SelectedCard[]
 	winning_card: SelectedCard
