@@ -4,7 +4,7 @@
 import type { Game, GameCard, SelectedCard } from '@/types/game.type'
 
 // React
-import { use, useEffect, useState } from 'react'
+import { use, useEffect, useRef, useState } from 'react'
 
 // Next
 import { useRouter } from 'next/navigation'
@@ -51,6 +51,7 @@ export default function Game({
 
 	const [hand, setHand] = useState<Array<GameCard>>([])
 	const [blackHand, setBlackHand] = useState<Array<GameCard>>([])
+	const handLengthRef = useRef(0)
 
 	const [round, setRound] = useState<Game['rounds'][0]>()
 
@@ -104,7 +105,7 @@ export default function Game({
 				player_id: auth.id,
 				card_id: card.id,
 			})
-			setHand(hand.filter((c) => c.id !== card.id))
+			setHand((prev) => prev.filter((c) => c.id !== card.id))
 		} catch {
 			showToast('Failed to select white card')
 		}
@@ -176,15 +177,19 @@ export default function Game({
 		}
 	}, [socket, id])
 
-	// sendBeacon fallback for tab/browser close
+	// Fallback for tab/browser close — uses fetch with keepalive to send JWT
 	useEffect(() => {
 		const handleBeforeUnload = () => {
 			const apiBase = process.env.NEXT_PUBLIC_API || ''
-			const payload = JSON.stringify({ player_id: auth.id })
-			navigator.sendBeacon(
-				`${apiBase}/games/${id}/leave`,
-				new Blob([payload], { type: 'application/json' })
-			)
+			fetch(`${apiBase}/games/${id}/leave`, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${auth.access_token}`,
+				},
+				body: JSON.stringify({ player_id: auth.id }),
+				keepalive: true,
+			}).catch(() => {})
 		}
 
 		window.addEventListener('beforeunload', handleBeforeUnload)
@@ -192,19 +197,24 @@ export default function Game({
 		return () => {
 			window.removeEventListener('beforeunload', handleBeforeUnload)
 		}
-	}, [id, auth.id])
+	}, [id, auth.id, auth.access_token])
+
+	// Keep ref in sync for use in effects with limited dependency arrays
+	useEffect(() => {
+		handLengthRef.current = hand.length
+	}, [hand.length])
 
 	useEffect(() => {
 		const getHand = () => {
-			GET('/cards/white/hand').then((data) => setHand(data)).catch(() => showToast('Failed to load hand'))
+			GET(`/cards/white/hand?gameId=${id}`).then((data) => setHand(data)).catch(() => showToast('Failed to load hand'))
 		}
 
 		const getBlackHand = () => {
-			GET('/cards/black/hand').then((data) => setBlackHand(data)).catch(() => showToast('Failed to load black cards'))
+			GET(`/cards/black/hand?gameId=${id}`).then((data) => setBlackHand(data)).catch(() => showToast('Failed to load black cards'))
 		}
 
-		const getWhiteCard = async () => {
-			GET(`/cards/white`).then((response) => setHand((prev) => [...prev, response])).catch(() => showToast('Failed to draw card'))
+		const getWhiteCard = () => {
+			GET('/cards/white').then((response) => setHand((prev) => [...prev, response])).catch(() => showToast('Failed to draw card'))
 		}
 
 		if (!game) return
@@ -213,9 +223,9 @@ export default function Game({
 			getBlackHand()
 		}
 
-		if (hand.length === 0) {
+		if (handLengthRef.current === 0) {
 			getHand()
-		} else if (hand.length < 5) {
+		} else if (handLengthRef.current < 5) {
 			getWhiteCard()
 		}
 	}, [game?.rounds.length])
