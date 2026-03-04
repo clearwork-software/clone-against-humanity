@@ -52,6 +52,9 @@ export default function Game({
 	const [hand, setHand] = useState<Array<GameCard>>([])
 	const [blackHand, setBlackHand] = useState<Array<GameCard>>([])
 	const handLengthRef = useRef(0)
+	const wasCzarRef = useRef(false)
+
+	const [showRoundWin, setShowRoundWin] = useState(false)
 
 	const [round, setRound] = useState<Game['rounds'][0]>()
 
@@ -202,6 +205,18 @@ export default function Game({
 		}
 	}, [id, auth.id, auth.access_token])
 
+	// Auto-dismiss round winner overlay after 3 seconds
+	useEffect(() => {
+		const currentRound = game?.rounds?.find((r) => r?.number === round?.number)
+		if (currentRound?.winning_card?.player_id === auth.id && !game?.winner) {
+			setShowRoundWin(true)
+			const timer = setTimeout(() => setShowRoundWin(false), 3000)
+			return () => clearTimeout(timer)
+		} else {
+			setShowRoundWin(false)
+		}
+	}, [round?.winning_card, game?.winner])
+
 	// Keep ref in sync for use in effects with limited dependency arrays
 	useEffect(() => {
 		handLengthRef.current = hand.length
@@ -222,7 +237,16 @@ export default function Game({
 
 		if (!game) return
 
-		if (game?.rounds[game.rounds.length - 1]?.czar_id === auth.id) {
+		const isCzar = game?.rounds[game.rounds.length - 1]?.czar_id === auth.id
+
+		// Clear stale hand when transitioning from czar to regular player
+		if (wasCzarRef.current && !isCzar) {
+			setHand([])
+			setBlackHand([])
+			handLengthRef.current = 0
+		}
+
+		if (isCzar) {
 			getBlackHand()
 		}
 
@@ -231,6 +255,8 @@ export default function Game({
 		} else if (handLengthRef.current < 5) {
 			getWhiteCard()
 		}
+
+		wasCzarRef.current = isCzar
 	}, [game?.rounds.length])
 
 	if (!auth.access_token) {
@@ -386,9 +412,7 @@ export default function Game({
 						</div>
 					)}
 
-					{game?.rounds?.find((r) => r?.number === round?.number)?.winning_card
-						?.player_id === auth.id &&
-						!game.winner && (
+					{showRoundWin && (
 							<>
 								<div className='absolute top-0 left-0 flex items-center justify-center w-full h-full'>
 									<div className='flex flex-col items-center justify-center'>

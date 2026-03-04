@@ -10,10 +10,6 @@ const wrapper = async (
 	url: string,
 	{ method, headers, body }: FetchOptions
 ) => {
-	const defaultHeaders = {
-		'Content-Type': 'application/json',
-	}
-
 	const token = store.getState().auth.access_token
 
 	const authHeader = token ? { Authorization: `Bearer ${token}` } : null
@@ -22,11 +18,11 @@ const wrapper = async (
 		const response = await fetch(process.env.NEXT_PUBLIC_API + url, {
 			method,
 			headers: {
-				...defaultHeaders,
+				...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
 				...authHeader,
 				...headers,
 			},
-			body: JSON.stringify(body),
+			...(method !== 'GET' && body ? { body: JSON.stringify(body) } : {}),
 		})
 
 		const data = await response.json()

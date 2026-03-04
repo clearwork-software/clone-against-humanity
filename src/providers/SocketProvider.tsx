@@ -23,6 +23,7 @@ export const useSocket = () => useContext(SocketContext)
 export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 	const auth = useAppSelector(({ auth }) => auth)
 	const [connected, setConnected] = useState(false)
+	const [socket, setSocket] = useState<Socket | null>(null)
 	const socketRef = useRef<Socket | null>(null)
 	const currentGameId = useRef<string | null>(null)
 	const onReconnect = useRef<(() => void) | null>(null)
@@ -32,49 +33,52 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 			if (socketRef.current) {
 				socketRef.current.disconnect()
 				socketRef.current = null
+				setSocket(null)
 				setConnected(false)
 			}
 			return
 		}
 
-		const socket = io(process.env.NEXT_PUBLIC_API as string, {
+		const newSocket = io(process.env.NEXT_PUBLIC_API as string, {
 			auth: {
 				token: auth.access_token,
 			},
 		})
 
-		socketRef.current = socket
+		socketRef.current = newSocket
+		setSocket(newSocket)
 
-		socket.on('connect', () => {
+		newSocket.on('connect', () => {
 			setConnected(true)
 		})
 
-		socket.on('disconnect', () => {
+		newSocket.on('disconnect', () => {
 			setConnected(false)
 		})
 
-		socket.io.on('reconnect', () => {
+		newSocket.io.on('reconnect', () => {
 			if (currentGameId.current) {
-				socket.emit('join_game', currentGameId.current)
+				newSocket.emit('join_game', currentGameId.current)
 			}
 			onReconnect.current?.()
 		})
 
 		return () => {
-			socket.disconnect()
+			newSocket.disconnect()
 			socketRef.current = null
+			setSocket(null)
 			setConnected(false)
 		}
 	}, [auth.access_token])
 
 	const value = useMemo(
-		() => ({ socket: socketRef.current, connected, currentGameId, onReconnect }),
-		[connected]
+		() => ({ socket, connected, currentGameId, onReconnect }),
+		[socket, connected]
 	)
 
 	return (
 		<SocketContext.Provider value={value}>
-			{!connected && socketRef.current && (
+			{!connected && socket && (
 				<div className='fixed top-0 left-0 right-0 z-[200] bg-yellow-500 text-black text-center text-sm py-1'>
 					Reconnecting...
 				</div>

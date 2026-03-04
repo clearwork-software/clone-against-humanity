@@ -18,45 +18,84 @@ import { GET, PUT } from '@/lib/fetch'
 // Components
 import Chip from '../Chip'
 
-// Packages
-import io from 'socket.io-client'
+// Socket
+import { useSocket } from '@/providers/SocketProvider'
+
+// Toast
+import { useToast } from '@/providers/ToastProvider'
 
 const GameList = () => {
 	const auth = useAppSelector(({ auth }) => auth)
+	const { socket } = useSocket()
+	const { showToast } = useToast()
 
 	const [games, setGames] = useState<Array<any>>([])
+	const [loading, setLoading] = useState(true)
 
 	useEffect(() => {
 		const getGames = async () => {
-			const games = await GET('/games')
-
-			setGames(games)
+			try {
+				const games = await GET('/games')
+				setGames(games)
+			} catch {
+				showToast('Failed to load games')
+			} finally {
+				setLoading(false)
+			}
 		}
 
 		getGames()
+
+		const interval = setInterval(async () => {
+			try {
+				const games = await GET('/games')
+				setGames(games)
+			} catch {
+				// Silently fail on periodic refetch
+			}
+		}, 30000)
+
+		return () => clearInterval(interval)
 	}, [])
 
 	useEffect(() => {
-		const socket = io(process.env.NEXT_PUBLIC_API as string)
+		if (!socket) return
 
-		socket.on('game_created', (game) => {
-			setGames([...games, game])
-		})
+		const onGameCreated = (game: Game) => {
+			setGames((prev) => [...prev, game])
+		}
 
-		socket.on('game_updated', (game: Game) => {
-			const index = games.findIndex((g) => g.id === game.id)
+		const onGameUpdated = (game: Game) => {
+			setGames((prev) =>
+				prev.map((g) => (g.id === game.id ? game : g))
+			)
+		}
 
-			const updated = [...games]
-
-			updated[index] = game
-
-			setGames((state) => [...state, ...updated])
-		})
+		socket.on('game_created', onGameCreated)
+		socket.on('game_updated', onGameUpdated)
 
 		return () => {
-			socket.disconnect()
+			socket.off('game_created', onGameCreated)
+			socket.off('game_updated', onGameUpdated)
 		}
-	}, [])
+	}, [socket])
+
+	if (loading) {
+		return (
+			<div className='py-12 text-center text-gray-500'>
+				<p>Loading games...</p>
+			</div>
+		)
+	}
+
+	if (games.length === 0) {
+		return (
+			<div className='py-12 text-center text-gray-500'>
+				<p className='text-lg font-medium'>No games yet</p>
+				<p className='mt-1 text-sm'>Create a game to get started.</p>
+			</div>
+		)
+	}
 
 	return (
 		<div className='grid grid-cols-1 gap-4 md:grid-cols-4'>
@@ -71,13 +110,18 @@ const Item = ({ game }: { game: any }) => {
 	const router = useRouter()
 
 	const auth = useAppSelector(({ auth }) => auth)
+	const { showToast } = useToast()
 
 	const handleJoinGame = async () => {
-		await PUT(`/games/${game.id}/join`, {
-			player_id: auth.id,
-		})
+		try {
+			await PUT(`/games/${game.id}/join`, {
+				player_id: auth.id,
+			})
 
-		router.push(`/games/${game.id}`)
+			router.push(`/games/${game.id}`)
+		} catch {
+			showToast('Failed to join game')
+		}
 	}
 
 	return (
