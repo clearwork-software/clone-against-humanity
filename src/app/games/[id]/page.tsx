@@ -4,7 +4,7 @@
 import type { Game, GameCard, SelectedCard } from '@/types/game.type'
 
 // React
-import { useEffect, useState } from 'react'
+import { use, useEffect, useState } from 'react'
 
 // Next
 import { useRouter } from 'next/navigation'
@@ -24,18 +24,26 @@ import { IconCards, IconCrown, IconMenu } from '@tabler/icons-react'
 
 // Packages
 import ConfettiExplosion from 'react-confetti-explosion'
-import { io } from 'socket.io-client'
 import useToggle from '@/hooks/useToggle'
 import classNames from 'classnames'
+
+// Socket
+import { useSocket } from '@/providers/SocketProvider'
+
+// Toast
+import { useToast } from '@/providers/ToastProvider'
 
 export default function Game({
 	params,
 }: {
-	params: {
+	params: Promise<{
 		id: string
-	}
+	}>
 }) {
+	const { id } = use(params)
 	const router = useRouter()
+	const { socket, currentGameId, onReconnect } = useSocket()
+	const { showToast } = useToast()
 
 	const auth = useAppSelector(({ auth }) => auth)
 
@@ -49,24 +57,35 @@ export default function Game({
 	const [menuVisible, toggleMenu] = useToggle(false)
 
 	const leaveGame = async () => {
-		await PUT(`/games/${params.id}/leave`, {
-			player_id: auth.id,
-		})
-
-		router.push('/')
+		try {
+			await PUT(`/games/${id}/leave`, {
+				player_id: auth.id,
+			})
+			router.push('/')
+		} catch {
+			showToast('Failed to leave game')
+		}
 	}
 
 	const startGame = async () => {
-		await PUT(`/games/${params.id}/start`, {
-			player_id: auth.id,
-		})
+		try {
+			await PUT(`/games/${id}/start`, {
+				player_id: auth.id,
+			})
+		} catch {
+			showToast('Failed to start game')
+		}
 	}
 
 	const handleSelectBlackCard = async (card: GameCard) => {
-		await PUT(`/games/${params.id}/select-black-card`, {
-			player_id: auth.id,
-			card_id: card.id,
-		})
+		try {
+			await PUT(`/games/${id}/select-black-card`, {
+				player_id: auth.id,
+				card_id: card.id,
+			})
+		} catch {
+			showToast('Failed to select black card')
+		}
 	}
 
 	const handleSelectWhiteCard = async (card: GameCard) => {
@@ -80,63 +99,115 @@ export default function Game({
 			return
 		}
 
-		await PUT(`/games/${params.id}/select-white-card`, {
-			player_id: auth.id,
-			card_id: card.id,
-		})
-
-		setHand(hand.filter((c) => c.id !== card.id))
+		try {
+			await PUT(`/games/${id}/select-white-card`, {
+				player_id: auth.id,
+				card_id: card.id,
+			})
+			setHand(hand.filter((c) => c.id !== card.id))
+		} catch {
+			showToast('Failed to select white card')
+		}
 	}
 
 	const handleSelectWinningCard = async (card: GameCard) => {
-		await PUT(`/games/${params.id}/select-winning-card`, {
-			card_id: card.id,
-		})
+		try {
+			await PUT(`/games/${id}/select-winning-card`, {
+				card_id: card.id,
+			})
+		} catch {
+			showToast('Failed to select winning card')
+		}
+	}
+
+	const fetchGame = async () => {
+		try {
+			const data = await GET(`/games/${id}`)
+			setGame(data)
+			if (data?.rounds?.length > 0) {
+				setRound(data.rounds[data.rounds.length - 1])
+			}
+		} catch {
+			showToast('Failed to load game')
+		}
 	}
 
 	useEffect(() => {
-		const getGameData = async () => {
-			const game = await GET(`/games/${params.id}`)
-
-			setGame(game)
-		}
-
-		getGameData()
+		fetchGame()
 	}, [])
 
 	useEffect(() => {
-		const socket = io(process.env.NEXT_PUBLIC_API as string)
+		if (!socket) return
 
-		socket.on('game_updated', (data: Game) => {
-			if (data.id === params.id) {
+		socket.emit('join_game', id)
+		if (currentGameId) {
+			currentGameId.current = id
+		}
+
+		if (onReconnect) {
+			onReconnect.current = fetchGame
+		}
+
+		const onGameUpdated = (data: Game) => {
+			if (data.id === id) {
 				setGame(data)
-				setRound(data.rounds[data.rounds.length - 1])
+				if (data.rounds?.length > 0) {
+					setRound(data.rounds[data.rounds.length - 1])
+				}
 			}
-		})
+		}
+
+		socket.on('game_updated', onGameUpdated)
 
 		return () => {
-			leaveGame().then(() => socket.disconnect())
+			socket.off('game_updated', onGameUpdated)
+			socket.emit('leave_game', id)
+			if (currentGameId) {
+				currentGameId.current = null
+			}
+			if (onReconnect) {
+				onReconnect.current = null
+			}
+			try {
+				PUT(`/games/${id}/leave`, { player_id: auth.id }).catch(() => {})
+			} catch {
+				// Ensure cleanup continues even if the HTTP call fails
+			}
 		}
-	}, [])
+	}, [socket, id])
+
+	// sendBeacon fallback for tab/browser close
+	useEffect(() => {
+		const handleBeforeUnload = () => {
+			const apiBase = process.env.NEXT_PUBLIC_API || ''
+			const payload = JSON.stringify({ player_id: auth.id })
+			navigator.sendBeacon(
+				`${apiBase}/games/${id}/leave`,
+				new Blob([payload], { type: 'application/json' })
+			)
+		}
+
+		window.addEventListener('beforeunload', handleBeforeUnload)
+
+		return () => {
+			window.removeEventListener('beforeunload', handleBeforeUnload)
+		}
+	}, [id, auth.id])
 
 	useEffect(() => {
 		const getHand = () => {
-			GET('/cards/white/hand').then((data) => setHand(data))
+			GET('/cards/white/hand').then((data) => setHand(data)).catch(() => showToast('Failed to load hand'))
 		}
 
 		const getBlackHand = () => {
-			GET('/cards/black/hand').then((data) => setBlackHand(data))
+			GET('/cards/black/hand').then((data) => setBlackHand(data)).catch(() => showToast('Failed to load black cards'))
 		}
 
 		const getWhiteCard = async () => {
-			GET(`/cards/white`).then((response) => setHand([...hand, response]))
+			GET(`/cards/white`).then((response) => setHand((prev) => [...prev, response])).catch(() => showToast('Failed to draw card'))
 		}
 
 		if (!game) return
-
-		const round = game.rounds[game.rounds.length - 1]
-
-		setRound(round)
 
 		if (game?.rounds[game.rounds.length - 1]?.czar_id === auth.id) {
 			getBlackHand()
@@ -149,18 +220,19 @@ export default function Game({
 		}
 	}, [game?.rounds.length])
 
-	if (!game) {
+	if (!auth.access_token) {
 		return (
-			<div className='flex items-center justify-center w-full h-screen'>
-				<p>Loading Game..</p>
+			<div className='flex flex-col items-center justify-center w-full h-screen text-gray-500'>
+				<p className='text-lg font-medium'>Not logged in</p>
+				<p className='mt-1 text-sm'>Please log in to join a game.</p>
 			</div>
 		)
 	}
 
-	if (!auth.access_token) {
+	if (!game) {
 		return (
-			<div>
-				<p>Not logged in</p>
+			<div className='flex flex-col items-center justify-center w-full h-screen text-gray-500'>
+				<p className='text-lg'>Loading game...</p>
 			</div>
 		)
 	}
@@ -174,8 +246,6 @@ export default function Game({
 				>
 					<IconMenu size={42} />
 				</button>
-
-				{menuVisible && <p>menu is visible</p>}
 
 				<div
 					className={classNames(
@@ -207,7 +277,6 @@ export default function Game({
 					{game?.rounds?.length === 0 && (
 						<div className='flex items-center justify-center w-full h-full'>
 							<p>This game hasn't started yet</p>
-							{menuVisible && <p>menu is visible</p>}
 						</div>
 					)}
 
