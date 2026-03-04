@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useAppSelector } from '@/redux/store'
 
@@ -67,10 +67,13 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 		}
 	}, [auth.access_token])
 
+	const value = useMemo(
+		() => ({ socket: socketRef.current, connected, currentGameId, onReconnect }),
+		[connected]
+	)
+
 	return (
-		<SocketContext.Provider
-			value={{ socket: socketRef.current, connected, currentGameId, onReconnect }}
-		>
+		<SocketContext.Provider value={value}>
 			{!connected && socketRef.current && (
 				<div className='fixed top-0 left-0 right-0 z-[200] bg-yellow-500 text-black text-center text-sm py-1'>
 					Reconnecting...

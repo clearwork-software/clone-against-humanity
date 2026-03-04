@@ -137,6 +137,7 @@ export default function Game({
 		fetchGame()
 	}, [])
 
+	// Socket event subscription — only manages listeners, no side effects on cleanup
 	useEffect(() => {
 		if (!socket) return
 
@@ -162,20 +163,22 @@ export default function Game({
 
 		return () => {
 			socket.off('game_updated', onGameUpdated)
-			socket.emit('leave_game', id)
-			if (currentGameId) {
-				currentGameId.current = null
-			}
 			if (onReconnect) {
 				onReconnect.current = null
 			}
-			try {
-				PUT(`/games/${id}/leave`, { player_id: auth.id }).catch(() => {})
-			} catch {
-				// Ensure cleanup continues even if the HTTP call fails
-			}
 		}
 	}, [socket, id])
+
+	// Game leave on unmount — only fires once when component truly unmounts
+	useEffect(() => {
+		return () => {
+			if (currentGameId) {
+				currentGameId.current = null
+			}
+			socket?.emit('leave_game', id)
+			PUT(`/games/${id}/leave`, { player_id: auth.id }).catch(() => {})
+		}
+	}, [])
 
 	// Fallback for tab/browser close — uses fetch with keepalive to send JWT
 	useEffect(() => {
@@ -214,7 +217,7 @@ export default function Game({
 		}
 
 		const getWhiteCard = () => {
-			GET('/cards/white').then((response) => setHand((prev) => [...prev, response])).catch(() => showToast('Failed to draw card'))
+			GET(`/cards/white?gameId=${id}`).then((response) => setHand((prev) => [...prev, response])).catch(() => showToast('Failed to draw card'))
 		}
 
 		if (!game) return
